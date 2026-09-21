@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The 80dp mark sits inside the Android 12 safe icon area. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp" android:height="288dp"
+    android:viewportWidth="288" android:viewportHeight="288">
+    <path android:fillColor="#29352E" android:strokeColor="#819087" android:strokeWidth="0.8"
+        android:pathData="M144,105 A39,39 0,1 1,144,183 A39,39 0,1 1,144,105 Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#C6D2C9" android:strokeWidth="1.1"
+        android:pathData="M106.5,136.8 A38.2,38.2 0,0 1,179.6,130.2" />
+    <path android:fillColor="#F7F7F8"
+        android:pathData="M138,129 C136,128 134,129 134,132 L134,156 C134,159 136,160 138,159 L160,147 C162,145 162,143 160,141 Z" />
+</vector>
