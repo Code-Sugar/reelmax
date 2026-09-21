@@ -8,9 +8,11 @@ class CategoryPage extends StatefulWidget {
     super.key,
     required this.openDetail,
     this.sections = const {},
+    this.content,
   });
   final ValueChanged<DramaInfo> openDetail;
   final Map<String, List<DramaInfo>> sections;
+  final Widget? content;
   @override
   State<CategoryPage> createState() => _CategoryPageState();
 }
@@ -74,7 +76,7 @@ class _CategoryPageState extends State<CategoryPage> {
                 ),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 9, 20, 0),
-                  child: Column(
+                  child: widget.content ?? Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _heading('History', null),

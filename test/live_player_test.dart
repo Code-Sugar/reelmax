@@ -329,10 +329,14 @@ void main() {
             .first,
       );
       expect(chromeState().opacity, 0);
-      // Hidden controls don't block the full-screen pause gesture.
+      // The first tap reveals controls without interrupting playback.
       await tester.tapAt(center);
       await tester.pumpAndSettle();
       expect(chromeState().opacity, 1);
+      expect(platform.playing.values.where((v) => v), hasLength(1));
+      // With controls visible, a second tap pauses.
+      await tester.tapAt(center);
+      await tester.pumpAndSettle();
       expect(platform.playing.values.where((v) => v), isEmpty);
       await tester.pump(const Duration(seconds: 3));
       expect(chromeState().opacity, 1);

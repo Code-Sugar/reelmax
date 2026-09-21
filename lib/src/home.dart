@@ -17,6 +17,7 @@ class HomePage extends StatefulWidget {
     this.items,
     this.selectedFilter,
     this.onFilter,
+    this.filters = const ['New', 'Top', 'Exclusive'],
   });
   final ValueChanged<DramaInfo> openDetail;
   final bool active;
@@ -24,6 +25,7 @@ class HomePage extends StatefulWidget {
   final List<Feature>? items;
   final String? selectedFilter;
   final ValueChanged<String>? onFilter;
+  final List<String> filters;
   @override
   State<HomePage> createState() => _HomePageState();
 }
@@ -36,6 +38,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   double dockDrag = 0;
   late final swipe = VerticalSwipeController(
     vsync: this,
+    duration: const Duration(milliseconds: 580),
+    curve: Curves.easeInOutCubic,
     onChanged: (step) => setState(() {
       feature = (feature + step) % features.length;
     }),
@@ -44,7 +48,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   void refreshSwipe() => setState(() {});
   late final AnimationController transition = AnimationController(
     vsync: this,
-    duration: contentSwitchMotion,
+    duration: const Duration(milliseconds: 520),
   );
   @override
   void dispose() {
@@ -55,7 +59,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   double get bottom => math.max(18, MediaQuery.paddingOf(context).bottom) + 88;
   Future<void> showNext() async {
-    if (expanding || swipe.active) return;
+    if (expanding || swipe.active || features.length < 2) return;
     setState(() => expanding = true);
     try {
       await transition.forward(from: 0).orCancel;
@@ -86,16 +90,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       return GestureDetector(
         key: const ValueKey('home-swipe'),
         behavior: HitTestBehavior.opaque,
-        onVerticalDragStart: (_) {
-          if (!expanding) swipe.start();
-        },
-        onVerticalDragUpdate: (details) {
-          if (!expanding) swipe.update(details, height);
-        },
-        onVerticalDragEnd: (details) {
-          if (!expanding) swipe.end(details, height);
-        },
-        onVerticalDragCancel: swipe.cancel,
+        onVerticalDragStart: collapsed && !expanding && features.length > 1
+            ? (_) => swipe.start()
+            : null,
+        onVerticalDragUpdate: collapsed && !expanding && features.length > 1
+            ? (details) => swipe.update(details, height)
+            : null,
+        onVerticalDragEnd: collapsed && !expanding && features.length > 1
+            ? (details) => swipe.end(details, height)
+            : null,
+        onVerticalDragCancel: collapsed ? swipe.cancel : null,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -259,7 +263,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               AnimatedBuilder(
                 animation: transition,
                 builder: (_, _) {
-                  final t = arrive.transform(transition.value);
+                  final t = Curves.easeInOutCubic.transform(transition.value);
                   final origin = Rect.fromLTWH(
                     width - 20 - nextWidth,
                     height - bottom - nextWidth / .58,
@@ -321,48 +325,68 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ),
                     child: Row(
                       children: [
-                        for (final name in ['New', 'Top', 'Exclusive']) ...[
-                          SizedBox(
-                            width: width <= 370
-                                ? (name == 'Exclusive' ? 100 : 62)
-                                : name == 'Exclusive'
-                                ? (width * .3196).clamp(100, 124)
-                                : (width * (name == 'Top' ? .201 : .1985))
-                                      .clamp(64, name == 'Top' ? 78 : 77),
-                            child: Pressable(
-                              label: name,
-                              selected:
-                                  (widget.selectedFilter ?? filter) == name,
-                              onTap: () {
-                                setState(() => filter = name);
-                                widget.onFilter?.call(name);
-                              },
-                              child: Glass(
-                                variant: GlassVariant.filter,
-                                height: width <= 370 ? 35 : 37,
-                                active:
-                                    (widget.selectedFilter ?? filter) == name,
-                                child: Center(
-                                  child: Text(
-                                    tr(context, name),
-                                    style: type(
-                                      14,
-                                      weight: 650,
-                                      color:
+                        Expanded(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                for (final name in widget.filters) ...[
+                                  SizedBox(
+                                    width: width <= 370
+                                        ? (name == 'Exclusive' ? 100 : 62)
+                                        : name == 'Exclusive'
+                                        ? (width * .3196).clamp(100, 124)
+                                        : (width *
+                                                  (name == 'Top'
+                                                      ? .201
+                                                      : .1985))
+                                              .clamp(
+                                                64,
+                                                name == 'Top' ? 78 : 77,
+                                              ),
+                                    child: Pressable(
+                                      label: name,
+                                      selected:
                                           (widget.selectedFilter ?? filter) ==
-                                              name
-                                          ? const Color(0xff242426)
-                                          : ink,
+                                          name,
+                                      onTap: () {
+                                        setState(() => filter = name);
+                                        widget.onFilter?.call(name);
+                                      },
+                                      child: Glass(
+                                        variant: GlassVariant.filter,
+                                        height: width <= 370 ? 35 : 37,
+                                        active:
+                                            (widget.selectedFilter ?? filter) ==
+                                            name,
+                                        child: Center(
+                                          child: Text(
+                                            tr(context, name),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: type(
+                                              14,
+                                              weight: 650,
+                                              color:
+                                                  (widget.selectedFilter ??
+                                                          filter) ==
+                                                      name
+                                                  ? const Color(0xff242426)
+                                                  : ink,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ),
+                                  if (name != widget.filters.last)
+                                    SizedBox(width: width <= 370 ? 6 : 8),
+                                ],
+                              ],
                             ),
                           ),
-                          if (name != 'Exclusive')
-                            SizedBox(width: width <= 370 ? 6 : 8),
-                        ],
-                        const Spacer(),
+                        ),
+                        const SizedBox(width: 8),
                         CircleControl(
                           key: const ValueKey('home-search'),
                           label: '搜索',

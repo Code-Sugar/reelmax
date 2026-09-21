@@ -17,6 +17,7 @@ import 'live_account.dart';
 import 'live_bubbles.dart';
 import 'player_panels.dart';
 import 'speed_arrows.dart';
+import 'seek_bar.dart';
 
 class _CachedEpisode {
   _CachedEpisode(this.controller, this.quality, this.qualities, this.paused);
@@ -27,9 +28,17 @@ class _CachedEpisode {
 }
 
 class LivePlayer extends StatefulWidget {
-  const LivePlayer({super.key, required this.skit, this.initialIndex = 0});
+  const LivePlayer({
+    super.key,
+    required this.skit,
+    this.initialIndex = 0,
+    this.initialDramaId,
+    this.initialPosition = Duration.zero,
+  });
   final DramaInfo skit;
   final int initialIndex;
+  final int? initialDramaId;
+  final Duration initialPosition;
   @override
   State<LivePlayer> createState() => _LivePlayerState();
 }
@@ -49,6 +58,43 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
   int? activeEpisodeId;
   String? cacheToken;
   bool cacheSessionSet = false;
+  AccountStore? historyAccount;
+  String? historyScope;
+  bool initialEpisodeResolved = false;
+  DateTime lastHistorySave = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void saveHistory() {
+    final controller = video;
+    final account = historyAccount;
+    historyScope ??= account?.historyScope;
+    final episode = episodes
+        .where((e) => integer(e['id']) == activeEpisodeId)
+        .firstOrNull;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        account == null ||
+        historyScope == null ||
+        episode == null) {
+      return;
+    }
+    unawaited(
+      account.watchHistory.record(historyScope!, {
+        'skitId': widget.skit.serverId,
+        'dramaId': activeEpisodeId,
+        'skitName': widget.skit.title,
+        'cover': string(episode['cover']).isNotEmpty
+            ? episode['cover']
+            : widget.skit.image,
+        'episodeTitle': string(episode['episodeTitle']).isNotEmpty
+            ? episode['episodeTitle']
+            : 'Episodes ${episodes.indexOf(episode) + 1}',
+        'positionMs': controller.value.position.inMilliseconds,
+        'durationMs': controller.value.duration.inMilliseconds,
+        'completed': controller.value.isCompleted,
+      }),
+    );
+    lastHistorySave = DateTime.now();
+  }
 
   Duration resumePosition(VideoPlayerController controller) =>
       controller.value.isCompleted ||
@@ -58,6 +104,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
       : controller.value.position;
 
   void rememberActive() {
+    saveHistory();
     final id = activeEpisodeId;
     final controller = video;
     if (id == null || controller == null) return;
@@ -95,8 +142,9 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
         if (!mounted ||
             !foreground ||
             memoryConstrained ||
-            attempt != generation)
+            attempt != generation) {
           return;
+        }
         final neighbour = index + offset;
         if (neighbour < 0 || neighbour >= episodes.length) continue;
         final episode = episodes[neighbour];
@@ -270,6 +318,8 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
     super.didChangeDependencies();
     if (!started) {
       started = true;
+      historyAccount = AccountScope.of(context);
+      historyScope = historyAccount!.historyScope;
       loadEpisodes();
     }
   }
@@ -294,6 +344,17 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
         });
         return;
       }
+      if (!initialEpisodeResolved) {
+        initialEpisodeResolved = true;
+        final requested = episodes.indexWhere(
+          (e) => integer(e['id']) == widget.initialDramaId,
+        );
+        if (requested >= 0) {
+          index = requested;
+          positions[integer(episodes[requested]['id'])] =
+              widget.initialPosition;
+        }
+      }
       index = index.clamp(0, episodes.length - 1);
       setState(() {});
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -312,6 +373,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
 
   Future<void> startVideo() async {
     retryAction = null;
+    scrubbing = false;
     endSpeed();
     revealControls();
     final attempt = ++generation;
@@ -613,6 +675,10 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
 
   void onVideo() {
     if (!mounted || video == null) return;
+    if (video!.value.isPlaying &&
+        DateTime.now().difference(lastHistorySave).inSeconds >= 5) {
+      saveHistory();
+    }
     syncControls();
     if (video!.value.hasError && error == null) {
       setState(
@@ -624,6 +690,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
       );
     }
     if (video!.value.isCompleted &&
+        !scrubbing &&
         !loading &&
         activeEpisodeId == integer(current['id']) &&
         index + 1 < episodes.length &&
@@ -654,8 +721,9 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
           await pending;
           if (preloading[id] == pending) preloading.remove(id);
         }
-        if (!mounted || attempt != generation || !foreground || overlayOpen)
+        if (!mounted || attempt != generation || !foreground || overlayOpen) {
           return;
+        }
         final nextEntry = cachedEpisodes[id];
         if (nextEntry != null) {
           nextEntry.paused = false;
@@ -664,8 +732,9 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
           }
         }
       }
-      if (!mounted || attempt != generation || !foreground || overlayOpen)
+      if (!mounted || attempt != generation || !foreground || overlayOpen) {
         return;
+      }
       setState(() {});
       // Mount the prepared texture before beginning the page transition.
       await WidgetsBinding.instance.endOfFrame;
@@ -849,6 +918,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) saveHistory();
     foreground = state == AppLifecycleState.resumed;
     if (!foreground) endSpeed();
     revealControls();
@@ -862,6 +932,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    saveHistory();
     controlsTimer?.cancel();
     generation++;
     WidgetsBinding.instance.removeObserver(this);
@@ -901,9 +972,15 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
                   ? promptLogin
                   : i == index && video != null
                   ? () {
+                      if (!controlsVisible) {
+                        revealControls();
+                        syncControls();
+                        return;
+                      }
                       revealControls();
                       setState(() => paused = !paused);
                       paused ? video!.pause() : video!.play();
+                      syncControls();
                     }
                   : null,
               child: Stack(
@@ -1154,28 +1231,14 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
             right: 24,
             bottom: MediaQuery.paddingOf(context).bottom + 25,
             child: chrome(
-              Listener(
-                onPointerDown: (_) {
-                  scrubbing = true;
-                  revealControls();
-                },
-                onPointerUp: (_) {
-                  scrubbing = false;
+              EpisodeSeekBar(
+                key: ValueKey(video),
+                controller: video!,
+                onScrubbing: (value) {
+                  setState(() => scrubbing = value);
+                  if (value) revealControls();
                   syncControls();
                 },
-                onPointerCancel: (_) {
-                  scrubbing = false;
-                  syncControls();
-                },
-                child: VideoProgressIndicator(
-                  video!,
-                  allowScrubbing: true,
-                  colors: const VideoProgressColors(
-                    playedColor: Colors.white,
-                    bufferedColor: Colors.white38,
-                    backgroundColor: Colors.white24,
-                  ),
-                ),
               ),
             ),
           ),

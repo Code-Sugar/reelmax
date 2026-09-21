@@ -25,12 +25,14 @@ class AccountFrame extends StatelessWidget {
     this.footer,
     this.tabPage = false,
     this.scrollKey,
+    this.body,
   });
   final String title;
   final List<Widget> children;
   final bool back, tabPage;
   final Widget? trailing, footer;
   final Key? scrollKey;
+  final Widget? body;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -90,21 +92,35 @@ class AccountFrame extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: SingleChildScrollView(
-                key: scrollKey,
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: EdgeInsets.fromLTRB(
-                  24,
-                  8,
-                  24,
-                  tabPage ? 112 : 28 + MediaQuery.paddingOf(context).bottom,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: children,
-                ),
-              ),
+              child: body != null
+                  ? Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        24,
+                        8,
+                        24,
+                        tabPage
+                            ? 112
+                            : 28 + MediaQuery.paddingOf(context).bottom,
+                      ),
+                      child: body,
+                    )
+                  : SingleChildScrollView(
+                      key: scrollKey,
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: EdgeInsets.fromLTRB(
+                        24,
+                        8,
+                        24,
+                        tabPage
+                            ? 112
+                            : 28 + MediaQuery.paddingOf(context).bottom,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: children,
+                      ),
+                    ),
             ),
             if (footer != null)
               Container(

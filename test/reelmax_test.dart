@@ -1,3 +1,4 @@
+import 'package:reelmax/src/home.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
@@ -450,64 +451,90 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets(
-    'home follows full-screen drags with Next expanded and settles continuously',
-    (tester) async {
-      await mount(tester);
-      Finder video(int index) => find.descendant(
-        of: find.byKey(ValueKey('home-video-$index')),
-        matching: find.byType(PreviewVideo),
-      );
-      final gesture = await tester.startGesture(const Offset(110, 740));
-      await gesture.moveBy(const Offset(0, -24));
-      await tester.pump();
-      final start = tester.getTopLeft(video(0)).dy;
-      await gesture.moveBy(const Offset(0, -240));
-      await tester.pump();
-      expect(tester.getTopLeft(video(0)).dy, closeTo(start - 240, .1));
-      await gesture.moveBy(const Offset(0, -280));
-      await tester.pump();
-      final beforeRelease = tester.getTopLeft(video(0)).dy;
-      expect(beforeRelease, closeTo(start - 520, .1));
-      expect(
-        tester.getBottomLeft(video(0)).dy,
-        closeTo(tester.getTopLeft(video(1)).dy, .1),
-      );
-      await gesture.up();
-      await tester.pump();
-      expect(tester.getTopLeft(video(0)).dy, closeTo(beforeRelease, .1));
-      await tester.pumpAndSettle();
-      expect(find.text('Redline'), findsOneWidget);
+  testWidgets('home swipes only with Next collapsed and settles continuously', (
+    tester,
+  ) async {
+    await mount(tester);
+    Finder video(int index) => find.descendant(
+      of: find.byKey(ValueKey('home-video-$index')),
+      matching: find.byType(PreviewVideo),
+    );
+    await tester.drag(
+      find.byKey(const ValueKey('home-swipe')),
+      const Offset(0, -540),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Battle Of Two Cities'), findsOneWidget);
+    await tap(tester, find.byKey(const ValueKey('next-collapse')));
+    final gesture = await tester.startGesture(const Offset(110, 740));
+    await gesture.moveBy(const Offset(0, -24));
+    await tester.pump();
+    final start = tester.getTopLeft(video(0)).dy;
+    await gesture.moveBy(const Offset(0, -240));
+    await tester.pump();
+    expect(tester.getTopLeft(video(0)).dy, closeTo(start - 240, .1));
+    await gesture.moveBy(const Offset(0, -280));
+    await tester.pump();
+    final beforeRelease = tester.getTopLeft(video(0)).dy;
+    expect(beforeRelease, closeTo(start - 520, .1));
+    expect(
+      tester.getBottomLeft(video(0)).dy,
+      closeTo(tester.getTopLeft(video(1)).dy, .1),
+    );
+    await gesture.up();
+    await tester.pump();
+    expect(tester.getTopLeft(video(0)).dy, closeTo(beforeRelease, .1));
+    await tester.pumpAndSettle();
+    expect(find.text('Redline'), findsOneWidget);
 
-      // A vertical drag beginning on a filter still changes the video.
-      final reverse = await tester.startGesture(
-        tester.getCenter(find.text('Top')),
-      );
-      await reverse.moveBy(const Offset(0, 24));
-      await tester.pump();
-      await reverse.moveBy(const Offset(0, 540));
-      await tester.pump();
-      expect(tester.getTopLeft(video(1)).dy, greaterThan(500));
-      await reverse.up();
-      await tester.pumpAndSettle();
-      expect(find.text('Battle Of Two Cities'), findsOneWidget);
-      expect(find.text('已切换到 Top'), findsNothing);
+    // A vertical drag beginning on a filter still changes the video.
+    final reverse = await tester.startGesture(
+      tester.getCenter(find.text('Top')),
+    );
+    await reverse.moveBy(const Offset(0, 24));
+    await tester.pump();
+    await reverse.moveBy(const Offset(0, 540));
+    await tester.pump();
+    expect(tester.getTopLeft(video(1)).dy, greaterThan(500));
+    await reverse.up();
+    await tester.pumpAndSettle();
+    expect(find.text('Battle Of Two Cities'), findsOneWidget);
+    expect(find.text('已切换到 Top'), findsNothing);
 
-      final canceled = await tester.startGesture(const Offset(110, 500));
-      await canceled.moveBy(const Offset(0, -24));
-      await tester.pump();
-      await canceled.moveBy(const Offset(0, -40));
-      await tester.pump();
-      await canceled.cancel();
-      await tester.pump();
-      expect(tester.getTopLeft(video(0)).dy, lessThan(0));
-      await tester.pumpAndSettle();
-      expect(tester.getTopLeft(video(0)).dy, closeTo(0, .1));
-      expect(find.text('Battle Of Two Cities'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await finish(tester);
-    },
-  );
+    final canceled = await tester.startGesture(const Offset(110, 500));
+    await canceled.moveBy(const Offset(0, -24));
+    await tester.pump();
+    await canceled.moveBy(const Offset(0, -40));
+    await tester.pump();
+    await canceled.cancel();
+    await tester.pump();
+    expect(tester.getTopLeft(video(0)).dy, lessThan(0));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(video(0)).dy, closeTo(0, .1));
+    expect(find.text('Battle Of Two Cities'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await finish(tester);
+  });
+
+  testWidgets('expanded Next advances on tap with a slower zoom transition', (
+    tester,
+  ) async {
+    await mount(tester);
+    await tester.tap(find.byKey(const ValueKey('next-teaser')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final dynamic state = tester.state(find.byType(HomePage));
+    expect(state.expanding, isTrue);
+    expect(state.feature, 0);
+    // Repeated taps during expansion must not skip another video.
+    await tester.tap(find.byKey(const ValueKey('next-teaser')));
+    await tester.pumpAndSettle();
+    expect(state.expanding, isFalse);
+    expect(state.feature, 1);
+    expect(find.text('Redline'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await finish(tester);
+  });
 
   testWidgets(
     'player drags across a full screen from controls, reverses and auto-advances',

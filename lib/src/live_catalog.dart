@@ -9,8 +9,9 @@ import 'design.dart';
 import 'detail.dart';
 import 'home.dart';
 import 'localization.dart';
+import 'library_guest.dart';
 import 'live_player.dart';
-import 'category.dart';
+export 'live_category.dart';
 
 DramaInfo remoteDrama(Json d) => DramaInfo(
   serverId: integer(d['id']),
@@ -135,13 +136,21 @@ class LiveHome extends StatefulWidget {
 }
 
 class _LiveHomeState extends State<LiveHome> {
-  String filter = 'New';
+  String? filter;
   @override
   Widget build(BuildContext context) => ApiView(
     load: (api) => api.cachedGet('skit/show'),
     builder: (data, refresh) {
-      final tabs = objects(object(data)['tabs']);
-      final tab = tabs.where((v) => v['tabName'] == filter).firstOrNull;
+      final tabs =
+          objects(object(data)['tabs'])
+              .where((v) => v['status'] == null || integer(v['status']) == 1)
+              .toList()
+            ..sort((a, b) => integer(a['sort']).compareTo(integer(b['sort'])));
+      final labels = tabs.map((v) => string(v['tabName'])).toList();
+      final tab =
+          tabs.where((v) => v['tabName'] == filter).firstOrNull ??
+          tabs.firstOrNull;
+      final selected = string(tab?['tabName']);
       final entries = objects(
         tab?['dramas'],
       ).where((v) => integer(v['skitId']) > 0).toList();
@@ -151,25 +160,29 @@ class _LiveHomeState extends State<LiveHome> {
           back: false,
           tabPage: true,
           children: [
-            AccountSegments(
-              labels: const ['New', 'Top', 'Exclusive'],
-              selected: ['New', 'Top', 'Exclusive'].indexOf(filter),
-              onChanged: (i) =>
-                  setState(() => filter = ['New', 'Top', 'Exclusive'][i]),
-            ),
+            if (labels.isNotEmpty)
+              AccountSegments(
+                labels: labels,
+                selected: labels.indexOf(selected),
+                onChanged: (i) => setState(() => filter = labels[i]),
+              ),
             ApiProblem(
               tr(context, 'No videos available yet.', '暂无可播放内容。'),
-              retry: refresh,
+              retry: () {
+                AccountScope.of(context).api!.invalidateCatalog();
+                refresh();
+              },
             ),
           ],
         );
       }
       return HomePage(
-        key: ValueKey(filter),
+        key: ValueKey(selected),
         active: widget.active,
         openDetail: widget.openDetail,
         openSearch: widget.openSearch,
-        selectedFilter: filter,
+        selectedFilter: selected,
+        filters: labels,
         onFilter: (v) => setState(() => filter = v),
         items: entries
             .map(
@@ -187,34 +200,6 @@ class _LiveHomeState extends State<LiveHome> {
             )
             .toList(),
       );
-    },
-  );
-}
-
-class LiveCategory extends StatelessWidget {
-  const LiveCategory({super.key, required this.openDetail});
-  final ValueChanged<DramaInfo> openDetail;
-  @override
-  Widget build(BuildContext context) => ApiView(
-    placeholder: CategoryPage(openDetail: openDetail),
-    load: (api) => api.cachedGet('skit/init', {
-      'language': api.language,
-      'device': api.platform,
-    }),
-    builder: (value, refresh) {
-      final sections = <String, List<DramaInfo>>{};
-      // Match named sections only: an unrelated module must never replace a
-      // designed section just because it has the same position in the response.
-      for (final group in objects(object(value)['init'])) {
-        for (final module in objects(group['module'])) {
-          final title = string(module['title']).trim().toLowerCase();
-          final rows = objects(
-            module['skits'],
-          ).where((d) => integer(d['id']) > 0).map(remoteDrama).toList();
-          if (rows.isNotEmpty) sections[title] = rows;
-        }
-      }
-      return CategoryPage(openDetail: openDetail, sections: sections);
     },
   );
 }
@@ -279,6 +264,14 @@ class _LiveListPageState extends State<LiveListPage> {
       selected.clear();
       more = true;
     }
+    if (widget.library && !AccountScope.of(context).signedIn) {
+      setState(() {
+        busy = false;
+        error = null;
+        more = false;
+      });
+      return;
+    }
     setState(() {
       busy = true;
       error = null;
@@ -342,6 +335,47 @@ class _LiveListPageState extends State<LiveListPage> {
   @override
   Widget build(BuildContext context) {
     final store = AccountScope.of(context);
+    if (widget.library && !store.signedIn) {
+      return LibraryGuest(
+        selected: tab,
+        onChanged: (value) => setState(() => tab = value),
+        onSignIn: () async {
+          if (await requireAccount(context) && mounted) load(reset: true);
+        },
+      );
+    }
+    if (widget.library && entries.isEmpty) {
+      return AccountFrame(
+        title: widget.title,
+        back: false,
+        tabPage: true,
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AccountSegments(
+              labels: [
+                tr(context, 'Collect', '收藏'),
+                tr(context, 'Liked', '喜欢'),
+              ],
+              selected: tab,
+              onChanged: (i) {
+                setState(() => tab = i);
+                load(reset: true);
+              },
+            ),
+            Expanded(
+              child: LibraryStatus(
+                loading: busy,
+                liked: tab == 1,
+                error: error,
+                retry: () => load(reset: true),
+              ),
+            ),
+          ],
+        ),
+        children: const [],
+      );
+    }
     return AccountFrame(
       title: widget.title,
       back: !widget.library,

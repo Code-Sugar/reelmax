@@ -9,14 +9,14 @@ class VerticalSwipeController extends ChangeNotifier {
   VerticalSwipeController({
     required TickerProvider vsync,
     required this.onChanged,
-  }) : _animation = AnimationController(
-         vsync: vsync,
-         duration: contentSwitchMotion,
-       ) {
+    Duration duration = contentSwitchMotion,
+    this.curve = arrive,
+  }) : _animation = AnimationController(vsync: vsync, duration: duration) {
     _animation.addListener(_tick);
   }
 
   final ValueChanged<int> onChanged;
+  final Curve curve;
   final AnimationController _animation;
   double offset = 0;
   int direction = 1;
@@ -62,7 +62,7 @@ class VerticalSwipeController extends ChangeNotifier {
   }
 
   void _tick() {
-    offset = _from + (_to - _from) * arrive.transform(_animation.value);
+    offset = _from + (_to - _from) * curve.transform(_animation.value);
     notifyListeners();
   }
 

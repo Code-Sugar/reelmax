@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'api.dart';
+import 'watch_history.dart';
 
 enum OfferKind { subscription, coins }
 
@@ -144,6 +145,9 @@ class AccountStore extends ChangeNotifier {
     };
   }
   final SkitApi? api;
+  late final WatchHistory watchHistory = WatchHistory(api!.storage);
+  String? get historyScope => user != null && user!.id > 0
+      ? 'user-${user!.id}' : signedIn ? null : 'guest';
   bool get live => api != null;
   bool restoring = false;
   String? sessionError;
