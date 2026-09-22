@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
 import 'account_state.dart';
 import 'account_ui.dart';
@@ -25,6 +27,8 @@ class _CachedEpisode {
   String quality;
   Map<String, Uri> qualities;
   bool paused;
+  bool qualitiesLoaded = false;
+  bool qualitiesLoading = false;
 }
 
 class LivePlayer extends StatefulWidget {
@@ -53,6 +57,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
   final cachedEpisodes = <int, _CachedEpisode>{};
   final preloading = <int, Future<void>>{};
   bool memoryConstrained = false;
+  int preloadEpoch = 0;
   Future<void> preloadQueue = Future.value();
   final positions = <int, Duration>{};
   int? activeEpisodeId;
@@ -137,11 +142,13 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
   void preloadNeighbours() {
     if (memoryConstrained) return;
     final attempt = generation;
+    final epoch = preloadEpoch;
     preloadQueue = preloadQueue.then((_) async {
       for (final offset in [1, -1]) {
         if (!mounted ||
             !foreground ||
             memoryConstrained ||
+            epoch != preloadEpoch ||
             attempt != generation) {
           return;
         }
@@ -167,10 +174,12 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
 
   Future<void> preloadEpisode(int id, SkitApi source) async {
     final token = source.token;
+    final epoch = preloadEpoch;
     bool relevant() =>
         mounted &&
         !memoryConstrained &&
         foreground &&
+        epoch == preloadEpoch &&
         source.token == token &&
         [index - 1, index, index + 1].any(
           (i) =>
@@ -223,7 +232,9 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
   Future<void> Function()? retryAction;
   int generation = 0;
   bool started = false;
-  Map<String, Uri> qualities = {};
+  final qualityOptions = ValueNotifier<Map<String, Uri>>({});
+  Map<String, Uri> get qualities => qualityOptions.value;
+  set qualities(Map<String, Uri> value) => qualityOptions.value = value;
   String quality = 'Auto';
   bool overlayOpen = false;
   Timer? controlsTimer;
@@ -441,7 +452,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
       });
       if (foreground && !paused && !overlayOpen) await video!.play();
       syncControls();
-      if (cached.qualities.length == 1 && cached.quality == 'Auto') {
+      if (!cached.qualitiesLoaded && cached.quality == 'Auto') {
         unawaited(readQualities(cached.qualities['Auto']!, attempt));
       }
       preloadNeighbours();
@@ -570,27 +581,56 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
   }
 
   Future<void> readQualities(Uri uri, int attempt) async {
+    final entry = cachedEpisodes[activeEpisodeId];
+    if (entry == null || entry.qualitiesLoaded || entry.qualitiesLoading) {
+      return;
+    }
+    // MP4 is already fetched by the player. Downloading it again here just to
+    // look for an HLS manifest wastes bandwidth, memory and battery.
+    if (videoFormatHint(uri) != VideoFormat.hls) {
+      entry.qualitiesLoaded = true;
+      return;
+    }
+    entry.qualitiesLoading = true;
+    const maxManifestBytes = 256 * 1024;
     try {
       final response = await api.client
-          .get(uri)
+          .send(http.Request('GET', uri))
           .timeout(const Duration(seconds: 8));
-      if (!mounted || attempt != generation) return;
-      setState(() {
-        quality = 'Auto';
-        qualities = hlsVariants(response.body, uri);
-      });
-    } catch (_) {
-      if (mounted && attempt == generation) {
-        setState(() {
-          quality = 'Auto';
-          qualities = {'Auto': uri};
-        });
+      if (response.statusCode != 200 ||
+          (response.contentLength ?? 0) > maxManifestBytes) {
+        await response.stream.listen(null).cancel();
+        return;
       }
+      final bytes = await response.stream
+          .fold<List<int>>(<int>[], (bytes, chunk) {
+            if (!mounted || bytes.length + chunk.length > maxManifestBytes) {
+              throw const FormatException('HLS manifest read cancelled');
+            }
+            bytes.addAll(chunk);
+            return bytes;
+          })
+          .timeout(const Duration(seconds: 8));
+      final manifest = utf8.decode(bytes);
+      if (!manifest.trimLeft().startsWith('#EXTM3U')) return;
+      final variants = hlsVariants(manifest, uri);
+      // Retain even single-quality results when revisiting a cached episode.
+      entry.qualities = variants;
+      entry.qualitiesLoaded = true;
+      if (mounted && attempt == generation && video == entry.controller) {
+        setState(() => qualities = Map.of(variants));
+      }
+    } catch (_) {
+      // Automatic playback remains usable if optional quality lookup fails.
+    } finally {
+      entry.qualitiesLoading = false;
     }
   }
 
   Future<void> qualityPanel() async {
     if (video == null || overlayOpen) return;
+    final source = qualities['Auto'];
+    if (source != null) unawaited(readQualities(source, generation));
     overlayOpen = true;
     await video?.pause();
     if (!mounted) return;
@@ -600,10 +640,13 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: .4),
-      builder: (_) => QualityPanel(
-        current: quality,
-        options: {'Auto', ...playerQualities, ...qualities.keys}.toList(),
-        available: qualities.keys.toSet(),
+      builder: (_) => ValueListenableBuilder<Map<String, Uri>>(
+        valueListenable: qualityOptions,
+        builder: (_, available, _) => QualityPanel(
+          current: quality,
+          options: {'Auto', ...playerQualities, ...available.keys}.toList(),
+          available: available.keys.toSet(),
+        ),
       ),
     );
     overlayOpen = false;
@@ -649,7 +692,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
         selected,
         Map.of(qualities),
         paused,
-      );
+      )..qualitiesLoaded = true;
       activeEpisodeId = id;
       video = replacement;
       replacement.addListener(onVideo);
@@ -899,12 +942,18 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
     // Stop speculative buffering for this page after an OS memory warning.
     // Positions remain available if an evicted episode is opened again.
     memoryConstrained = true;
+    preloadEpoch++;
     unawaited(releaseInactiveEpisodes());
   }
 
   Future<void> releaseInactiveEpisodes() async {
+    // During a page switch startVideo temporarily detaches the old controller.
+    // Preserve the destination if it is already cached/prepared.
+    final retainedId =
+        activeEpisodeId ??
+        (episodes.isNotEmpty ? integer(current['id']) : null);
     final inactive = cachedEpisodes.keys
-        .where((id) => id != activeEpisodeId)
+        .where((id) => id != retainedId)
         .toList();
     final removed = <_CachedEpisode>[];
     for (final id in inactive) {
@@ -912,6 +961,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
       positions[id] = resumePosition(entry.controller);
       removed.add(entry);
     }
+    if (removed.isEmpty) return;
     if (mounted) setState(() {});
     await Future.wait(removed.map((entry) => entry.controller.dispose()));
   }
@@ -920,6 +970,14 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) saveHistory();
     foreground = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      // Keep the current episode and its position, but release speculative
+      // decoders/buffers while the app is genuinely in the background.
+      preloadEpoch++;
+      unawaited(releaseInactiveEpisodes());
+    }
     if (!foreground) endSpeed();
     revealControls();
     if (foreground && !paused && !overlayOpen) {
@@ -941,6 +999,7 @@ class _LivePlayerState extends State<LivePlayer> with WidgetsBindingObserver {
       unawaited(entry.controller.dispose());
     }
     cachedEpisodes.clear();
+    qualityOptions.dispose();
     pages.dispose();
     super.dispose();
   }

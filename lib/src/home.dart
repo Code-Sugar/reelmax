@@ -1,10 +1,10 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'data.dart';
 import 'data.dart' as catalog;
 import 'design.dart';
 import 'media.dart';
+import 'home_video_pool.dart';
 import 'vertical_swipe.dart';
 import 'localization.dart';
 
@@ -32,6 +32,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   List<Feature> get features => widget.items ?? catalog.features;
+  late final videos = HomeVideoPool()..addListener(refreshSwipe);
   String filter = 'New';
   int feature = 0;
   bool collapsed = false, expanding = false;
@@ -52,6 +53,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   );
   @override
   void dispose() {
+    videos.dispose();
     swipe.dispose();
     transition.dispose();
     super.dispose();
@@ -86,7 +88,26 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     builder: (context, constraints) {
       final width = constraints.maxWidth, height = constraints.maxHeight;
       final nextWidth = (width * .2).clamp(72.0, 82.0);
+      if (features.isEmpty) return const SizedBox.expand();
+      feature = feature.clamp(0, features.length - 1);
       final next = features[(feature + 1) % features.length];
+      final incoming = (feature + swipe.direction) % features.length;
+      videos.configure(
+        widget.active
+            ? [
+                features[feature].video,
+                next.video,
+                features[(feature - 1) % features.length].video,
+              ]
+            : [],
+        widget.active
+            ? {
+                if (!expanding) features[feature].video,
+                if (expanding || (!collapsed && !swipe.active)) next.video,
+                if (swipe.active) features[incoming].video,
+              }
+            : {},
+      );
       return GestureDetector(
         key: const ValueKey('home-swipe'),
         behavior: HitTestBehavior.opaque,
@@ -103,8 +124,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            for (var i = 0; i < features.length; i++)
+            for (final i in {feature, if (swipe.active) incoming})
               Offstage(
+                key: ValueKey('home-frame-$i-${features[i].video}'),
                 offstage:
                     i != feature &&
                     !(swipe.active &&
@@ -123,19 +145,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         PreviewVideo(
                           source: features[i].video,
                           poster: features[i].image,
-                          active:
-                              widget.active &&
-                              !expanding &&
-                              (i == feature ||
-                                  (swipe.active &&
-                                      i ==
-                                          (feature + swipe.direction) %
-                                              features.length)),
+                          controller: videos.controllerFor(features[i].video),
                         ),
                         const _HeroShade(),
-                        Positioned(
+                        AnimatedPositioned(
+                          duration: motion,
+                          curve: arrive,
                           left: 20,
-                          right: nextWidth + 40,
+                          // Leave space for both the preview and its 32px
+                          // toggle, including the gap between copy and toggle.
+                          right: math.max(
+                            20,
+                            (collapsed ? 70 : nextWidth + 74) - dockDrag,
+                          ),
                           bottom: bottom,
                           child: _HeroCopy(feature: features[i], width: width),
                         ),
@@ -190,11 +212,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 key: ValueKey(next.video),
                                 source: next.video,
                                 poster: next.image,
-                                active:
-                                    widget.active &&
-                                    !collapsed &&
-                                    !expanding &&
-                                    !swipe.active,
+                                controller: videos.controllerFor(next.video),
                               ),
                               Positioned(
                                 left: 5,
@@ -288,7 +306,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             PreviewVideo(
                               source: next.video,
                               poster: next.image,
-                              active: widget.active,
+                              controller: videos.controllerFor(next.video),
                             ),
                             const _HeroShade(),
                             if (t > .65)
@@ -443,35 +461,34 @@ class _HeroCopy extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
     children: [
-      Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
-            decoration: BoxDecoration(
-              color: const Color(0xffff453a),
-              borderRadius: BorderRadius.circular(5),
-            ),
-            child: Text(feature.age, style: type(9, weight: 700)),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+          decoration: BoxDecoration(
+            color: const Color(0xffff453a),
+            borderRadius: BorderRadius.circular(5),
           ),
-          const SizedBox(width: 9),
-          Text(feature.genre, style: type(12, color: const Color(0xc2ffffff))),
-        ],
+            child: Text(
+              // Some catalog entries have no genres yet; keep the tag legible.
+              feature.genre.trim().isEmpty ? 'Drama' : feature.genre,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: type(10, weight: 650, height: 1.2),
+          ),
+        ),
       ),
       const SizedBox(height: 8),
-      OverflowBox(
-        fit: OverflowBoxFit.deferToChild,
-        alignment: Alignment.centerLeft,
-        maxWidth: width - 40,
-        child: Text(
-          feature.title,
-          maxLines: 1,
-          style: type(
-            (width * .064).clamp(22, 26),
-            weight: 900,
-            spacing: -.468,
-            flare: 10,
-            volume: 48,
-          ),
+      Text(
+        feature.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: type(
+          (width * .064).clamp(22, 26),
+          weight: 900,
+          spacing: -.468,
+          flare: 10,
+          volume: 48,
         ),
       ),
       const SizedBox(height: 7),

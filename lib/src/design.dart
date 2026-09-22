@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -72,12 +74,16 @@ class Art extends StatelessWidget {
     this.alignment = Alignment.center,
     this.scale = 1,
     this.radius = 0,
+    this.decodeToDisplaySize = true,
   });
   final String name;
   final double? width, height;
   final double scale, radius;
   final BoxFit fit;
   final Alignment alignment;
+
+  /// Disable for artwork whose bounds continuously animate through many sizes.
+  final bool decodeToDisplaySize;
   @override
   Widget build(BuildContext context) => ClipRRect(
     borderRadius: BorderRadius.circular(radius),
@@ -89,23 +95,40 @@ class Art extends StatelessWidget {
         child: name.isEmpty
             ? const ColoredBox(color: Color(0xff202722))
             : name.startsWith('http')
-            ? Image.network(
-                name,
-                fit: fit,
-                alignment: alignment,
-                width: width,
-                height: height,
-                gaplessPlayback: true,
-                excludeFromSemantics: true,
-                errorBuilder: (_, _, _) => const ColoredBox(
-                  color: Color(0xff202722),
-                  child: Center(
-                    child: Icon(
-                      Icons.image_not_supported_outlined,
-                      color: Colors.white38,
+            ? LayoutBuilder(
+                builder: (context, box) {
+                  final pixels =
+                      MediaQuery.devicePixelRatioOf(context) * scale.abs();
+                  final pixelWidth = _decodeBucket(box.maxWidth * pixels);
+                  final pixelHeight = _decodeBucket(box.maxHeight * pixels);
+                  return Image(
+                    image:
+                        !decodeToDisplaySize ||
+                            (pixelWidth == null && pixelHeight == null)
+                        ? NetworkImage(name)
+                        : ArtNetworkImage(
+                            name,
+                            pixelWidth: pixelWidth,
+                            pixelHeight: pixelHeight,
+                            fit: fit,
+                          ),
+                    fit: fit,
+                    alignment: alignment,
+                    width: width,
+                    height: height,
+                    gaplessPlayback: true,
+                    excludeFromSemantics: true,
+                    errorBuilder: (_, _, _) => const ColoredBox(
+                      color: Color(0xff202722),
+                      child: Center(
+                        child: Icon(
+                          Icons.image_not_supported_outlined,
+                          color: Colors.white38,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
+                  );
+                },
               )
             : Image.asset(
                 'assets/$name',
@@ -119,6 +142,85 @@ class Art extends StatelessWidget {
       ),
     ),
   );
+}
+
+// Nearby layout sizes share an image-cache entry instead of decoding a new
+// bitmap for every pixel of an animated constraint. Round upward for sharpness.
+int? _decodeBucket(double pixels) =>
+    pixels.isFinite && pixels > 0 ? (pixels / 64).ceil() * 64 : null;
+
+/// Decodes remote artwork to the pixels actually visible at its fitted size.
+/// Unlike a two-dimensional ResizeImage, this keeps the source aspect ratio;
+/// unlike ResizeImagePolicy.fit, cover crops retain enough pixels to stay sharp.
+@immutable
+class ArtNetworkImage extends ImageProvider<ArtNetworkImage> {
+  const ArtNetworkImage(
+    this.url, {
+    this.pixelWidth,
+    this.pixelHeight,
+    this.fit = BoxFit.cover,
+  }) : assert(pixelWidth != null || pixelHeight != null);
+
+  final String url;
+  final int? pixelWidth, pixelHeight;
+  final BoxFit fit;
+
+  @override
+  Future<ArtNetworkImage> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture(this);
+
+  TargetImageSize decodeSize(int intrinsicWidth, int intrinsicHeight) {
+    final source = Size(intrinsicWidth.toDouble(), intrinsicHeight.toDouble());
+    double ratio;
+    if (pixelWidth == null) {
+      ratio = pixelHeight! / intrinsicHeight;
+    } else if (pixelHeight == null) {
+      ratio = pixelWidth! / intrinsicWidth;
+    } else {
+      final fitted = applyBoxFit(
+        fit,
+        source,
+        Size(pixelWidth!.toDouble(), pixelHeight!.toDouble()),
+      );
+      ratio = math.max(
+        fitted.destination.width / fitted.source.width,
+        fitted.destination.height / fitted.source.height,
+      );
+    }
+    ratio = ratio.clamp(0, 1);
+    return TargetImageSize(
+      width: math.max(1, (intrinsicWidth * ratio).ceil()),
+      height: math.max(1, (intrinsicHeight * ratio).ceil()),
+    );
+  }
+
+  @override
+  ImageStreamCompleter loadImage(
+    ArtNetworkImage key,
+    ImageDecoderCallback decode,
+  ) {
+    final source = NetworkImage(url);
+    final completer = source.loadImage(
+      source,
+      (buffer, {getTargetSize}) =>
+          decode(buffer, getTargetSize: key.decodeSize),
+    );
+    completer.addEphemeralErrorListener((_, _) {
+      scheduleMicrotask(() => PaintingBinding.instance.imageCache.evict(key));
+    });
+    return completer;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ArtNetworkImage &&
+      other.url == url &&
+      other.pixelWidth == pixelWidth &&
+      other.pixelHeight == pixelHeight &&
+      other.fit == fit;
+
+  @override
+  int get hashCode => Object.hash(url, pixelWidth, pixelHeight, fit);
 }
 
 class Glyph extends StatelessWidget {

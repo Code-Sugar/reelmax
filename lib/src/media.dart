@@ -10,87 +10,27 @@ VideoFormat? videoFormatHint(Uri uri) =>
     ? VideoFormat.hls
     : null;
 
-/// Bundled original media; no server or credentials are needed for playback.
-class PreviewVideo extends StatefulWidget {
+/// A view of a shared decoder; ownership belongs to the home video pool.
+class PreviewVideo extends StatelessWidget {
   const PreviewVideo({
     super.key,
     required this.source,
     required this.poster,
-    this.active = true,
+    required this.controller,
   });
   final String source, poster;
-  final bool active;
+  final VideoPlayerController? controller;
   @override
-  State<PreviewVideo> createState() => _PreviewVideoState();
-}
-
-class _PreviewVideoState extends State<PreviewVideo>
-    with WidgetsBindingObserver {
-  late final VideoPlayerController controller;
-  bool ready = false;
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    controller = widget.source.startsWith('http')
-        ? VideoPlayerController.networkUrl(
-            Uri.parse(widget.source),
-            formatHint: videoFormatHint(Uri.parse(widget.source)),
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-          )
-        : VideoPlayerController.asset(
-            'assets/${widget.source}',
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-          );
-    if (widget.source.isNotEmpty) initialize();
-  }
-
-  Future<void> initialize() async {
-    try {
-      await controller.initialize();
-      if (!mounted) return;
-      await controller.setVolume(0);
-      await controller.setLooping(true);
-      if (!mounted) return;
-      setState(() => ready = true);
-      if (widget.active) await controller.play();
-    } catch (error) {
-      debugPrint('Preview ${widget.source}: $error');
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant PreviewVideo oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (ready && oldWidget.active != widget.active) {
-      widget.active ? controller.play() : controller.pause();
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!ready) return;
-    if (state == AppLifecycleState.resumed && widget.active) {
-      controller.play();
-    } else {
-      controller.pause();
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Stack(
-    fit: StackFit.expand,
-    children: [
-      Art(widget.poster),
-      if (ready) VideoCover(controller: controller),
-    ],
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: Stack(
+      fit: StackFit.expand,
+      children: [
+        // This same poster expands from the Next card to full screen. Keep a
+        // stable image cache key throughout that size animation.
+        Art(poster, decodeToDisplaySize: false),
+        if (controller != null) VideoCover(controller: controller!),
+      ],
+    ),
   );
 }
 
@@ -99,12 +39,15 @@ class VideoCover extends StatelessWidget {
   final VideoPlayerController controller;
   @override
   Widget build(BuildContext context) => ClipRect(
-    child: FittedBox(
-      fit: BoxFit.cover,
-      child: SizedBox(
-        width: controller.value.size.width,
-        height: controller.value.size.height,
-        child: VideoPlayer(controller),
+    child: ColoredBox(
+      color: Colors.black,
+      child: FittedBox(
+        fit: BoxFit.contain,
+        child: SizedBox(
+          width: controller.value.size.width,
+          height: controller.value.size.height,
+          child: VideoPlayer(controller),
+        ),
       ),
     ),
   );
